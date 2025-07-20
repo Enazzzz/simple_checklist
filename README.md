@@ -160,7 +160,12 @@ This project is open source and available under the MIT License.
 
 ## 📋 Release Notes
 
-### Version 1.0.0 (Initial Release)
+### Version 1.0.1 (2025-07-20)
+- **Fixed asset loading for PyInstaller builds:** All icons and images are now reliably bundled and found at runtime, preventing missing file errors in the executable.
+- **Improved resource path handling:** Compatibility between development and frozen (executable) environments, so assets always load correctly.
+- **Build process improvements:** Updated build script and `.spec` file for robust asset inclusion and easier future maintenance.
+
+### Version 1.0.0 (Initial Release- 2025-07-19)
 - **Complete CSV checklist application** with modern UI
 - **Professional dark theme** with smooth animations
 - **Custom frameless window** with native controls
