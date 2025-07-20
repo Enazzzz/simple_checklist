@@ -7,16 +7,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('assets/checklist.png', '.'),
-        ('assets/checklist.ico', '.'),
-        ('assets/close_white.png', '.'),
-        ('assets/close_black.png', '.'),
-        ('assets/restore_white.png', '.'),
-        ('assets/restore_black.png', '.'),
-        ('assets/maximize_white.png', '.'),
-        ('assets/maximize_black.png', '.'),
-        ('assets/minimize_white.png', '.'),
-        ('assets/minimize_black.png', '.'),
+        ('assets', 'assets'),
     ],
     hiddenimports=[
         'win32gui',

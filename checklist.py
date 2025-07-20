@@ -172,6 +172,16 @@ def draw_text_with_shadow(surface, text, x, y, font, color, shadow_color, shadow
     text_surf = font.render(text, True, color)
     surface.blit(text_surf, (x, y))
 
+# Helper to get resource path for PyInstaller and dev
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 3) WINDOW MANAGEMENT
 # ──────────────────────────────────────────────────────────────────────────────
@@ -465,13 +475,7 @@ def get_button_rects(window_width):
 
 # Load system icons
 def load_system_icon(icon_name, size):
-    # Determine if running as a PyInstaller bundle
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.abspath(".")
-
-    local_icon_path = os.path.join(base_path, "assets", f"{icon_name}_white.png")
+    local_icon_path = resource_path(os.path.join("assets", f"{icon_name}_white.png"))
     if not os.path.exists(local_icon_path):
         raise FileNotFoundError(f"Icon file not found: {local_icon_path}")
         
@@ -843,12 +847,7 @@ def main():
 
         # Load application icon
         try:
-            # Determine if running as a PyInstaller bundle
-            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                base_path = sys._MEIPASS
-            else:
-                base_path = os.path.abspath(".")
-            icon_path = os.path.join(base_path, APP_ICON_FILE)
+            icon_path = resource_path(APP_ICON_FILE)
             app_icon_surface = pygame.image.load(icon_path).convert_alpha()
             app_icon_surface = pygame.transform.scale(app_icon_surface, (35, 35))
         except pygame.error as e:

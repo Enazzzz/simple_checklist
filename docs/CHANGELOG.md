@@ -5,6 +5,15 @@ All notable changes to the CSV Checklist Application will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2025-07-21
+
+### Fixed
+- Fixed asset loading for PyInstaller builds: all icons and images are now reliably bundled and found at runtime.
+- Improved resource path handling for compatibility between development and frozen (executable) environments.
+- Updated build script and spec file for robust asset inclusion.
+
+---
+
 ## [1.0.0] - 2025-01-XX
 
 ### Added
