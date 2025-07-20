@@ -1,12 +1,34 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
 
 a = Analysis(
     ['checklist.py'],
     pathex=[],
     binaries=[],
-    datas=[('checklist.png', '.'), ('close_black.png', '.'), ('close_white.png', '.'), ('maximize_black.png', '.'), ('maximize_white.png', '.'), ('minimize_white.png', '.'), ('minimize-black.png', '.'), ('restore_black.png', '.'), ('restore_white.png', '.')],
-    hiddenimports=[],
+    datas=[
+        ('checklist.png', '.'),
+        ('checklist.ico', '.'),
+        ('close_white.png', '.'),
+        ('close_black.png', '.'),
+        ('restore_white.png', '.'),
+        ('restore_black.png', '.'),
+        ('maximize_white.png', '.'),
+        ('maximize_black.png', '.'),
+        ('minimize_white.png', '.'),
+        ('minimize_black.png', '.'),
+    ],
+    hiddenimports=[
+        'win32gui',
+        'win32con',
+        'win32api',
+        'win32ui',
+        'win32com.shell.shell',
+        'win32com.shell.shellcon',
+        'ctypes',
+        'tkinter',
+        'tkinter.filedialog',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -35,5 +57,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['checklist.ico'],
+    icon=os.path.abspath('checklist.ico'),
 )

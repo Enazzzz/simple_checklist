@@ -127,8 +127,12 @@ HEADER_SHADOW_COLOR = (20, 20, 20)  # Dark shadow for header text
 
 # Animation constants
 ANIMATION_SPEED = 0.2  # Speed of checkbox animation
-CHECKBOX_ANIMATION_OFFSET = 2  # How many pixels the checkbox moves up/down during animation
-CHECKBOX_HOVER_ANIMATION_SPEED = 0.1 # Speed of hover animation
+CHECKBOX_ANIMATION_OFFSET = 1  # Reduced offset for subtler animation
+CHECKBOX_HOVER_ANIMATION_SPEED = 0.15  # Slightly faster hover animation
+SCROLL_WHEEL_STEP = 1.0  # Base step for mouse wheel scrolling
+SCROLL_ACCELERATION = 0.2  # How quickly scrolling accelerates
+SCROLL_DECELERATION = 1  # Base deceleration
+SCROLL_MAX_SPEED = 2.0  # Maximum scroll speed
 
 # Vertical offset for fine-tuning title text position
 TITLE_Y_OFFSET = 5 # Adjust this value to shift the title text up (negative) or down (positive)
@@ -396,6 +400,7 @@ class WindowManager:
 headers = []
 rows = []
 checked = []
+scroll_y = 0.0
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 5) UI RENDERING
@@ -460,7 +465,13 @@ def get_button_rects(window_width):
 
 # Load system icons
 def load_system_icon(icon_name, size):
-    local_icon_path = f"{icon_name}_white.png"
+    # Determine if running as a PyInstaller bundle
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+
+    local_icon_path = os.path.join(base_path, f"{icon_name}_white.png")
     if not os.path.exists(local_icon_path):
         raise FileNotFoundError(f"Icon file not found: {local_icon_path}")
         
@@ -544,432 +555,504 @@ def draw_load_popup(surface, width, height):
     return button_rect
 
 def draw_all(screen, window_manager, app_icon_surface, checkbox_animation_state):
-    w, h = screen.get_size()
-    screen.fill(BG_COLOR)
+    global headers, rows, checked, scroll_y
+    try:
+        w, h = screen.get_size()
+        screen.fill(BG_COLOR)
 
-    # Draw title bar with rounded corners
-    pygame.draw.rect(screen, TITLE_CLIENT_BG, (0, 0, w, TITLEBAR_HEIGHT))
-    title_surf = HEADER_FONT.render("CSV Checklist Table", True, TITLE_CLIENT_TEXT)
+        # Draw title bar with rounded corners
+        pygame.draw.rect(screen, TITLE_CLIENT_BG, (0, 0, w, TITLEBAR_HEIGHT))
+        title_surf = HEADER_FONT.render("CSV Checklist Table", True, TITLE_CLIENT_TEXT)
 
-    # Draw application icon if loaded
-    icon_width = 0 # Default width if no icon
-    if app_icon_surface:
-        # Position icon to the left, vertically centered within the title bar
-        icon_x = PADDING
-        icon_y = (TITLEBAR_HEIGHT - app_icon_surface.get_height()) // 2
-        screen.blit(app_icon_surface, (icon_x, icon_y))
-        icon_width = app_icon_surface.get_width()
+        # Draw application icon if loaded
+        icon_width = 0
+        if app_icon_surface:
+            icon_x = PADDING
+            icon_y = (TITLEBAR_HEIGHT - app_icon_surface.get_height()) // 2
+            screen.blit(app_icon_surface, (icon_x, icon_y))
+            icon_width = app_icon_surface.get_width()
 
-    # Calculate vertical position for top-left to align center with button icons' center
-    title_y = TITLEBAR_HEIGHT // 2 - title_surf.get_height() // 2 + TITLE_Y_OFFSET
-    title_x = PADDING + icon_width + PADDING
+        # Calculate vertical position for top-left to align center with button icons' center
+        title_y = TITLEBAR_HEIGHT // 2 - title_surf.get_height() // 2 + TITLE_Y_OFFSET
+        title_x = PADDING + icon_width + PADDING
 
-    # Draw title with shadow
-    draw_text_with_shadow(screen, "CSV Checklist Table", title_x, title_y, HEADER_FONT, TITLE_CLIENT_TEXT, HEADER_SHADOW_COLOR)
+        # Draw title with shadow
+        draw_text_with_shadow(screen, "CSV Checklist Table", title_x, title_y, HEADER_FONT, TITLE_CLIENT_TEXT, HEADER_SHADOW_COLOR)
 
-    # Draw window control buttons
-    min_rect, max_rect, close_rect = get_button_rects(w)
-    mouse_pos = pygame.mouse.get_pos()
-    mouse_pressed = pygame.mouse.get_pressed()[0]
-
-    # Draw minimize button
-    if min_rect.collidepoint(mouse_pos):
-        # Use a darker gray for the pressed state, BUTTON_HOVER_BG for hover when not pressed
-        bg = (80, 80, 80) if mouse_pressed else BUTTON_HOVER_BG
-    else:
-        bg = TITLE_CLIENT_BG
-    pygame.draw.rect(screen, bg, min_rect)
-    icon_rect = MINIMIZE_ICON.get_rect(center=min_rect.center)
-    screen.blit(MINIMIZE_ICON, icon_rect)
-
-    # Draw maximize/restore button
-    if max_rect.collidepoint(mouse_pos):
-        # Use a darker gray for the pressed state, BUTTON_HOVER_BG for hover when not pressed
-        bg = (80, 80, 80) if mouse_pressed else BUTTON_HOVER_BG
-    else:
-        bg = TITLE_CLIENT_BG
-    pygame.draw.rect(screen, bg, max_rect)
-    icon = MAXIMIZE_ICON if not window_manager.is_maximized else RESTORE_ICON
-    icon_rect = icon.get_rect(center=max_rect.center)
-    screen.blit(icon, icon_rect)
-
-    # Draw close button
-    if close_rect.collidepoint(mouse_pos):
-        bg = (255, 0, 0) if mouse_pressed else (200, 0, 0)
-    else:
-        bg = TITLE_CLIENT_BG
-    pygame.draw.rect(screen, bg, close_rect)
-    icon_rect = CLOSE_ICON.get_rect(center=close_rect.center)
-    screen.blit(CLOSE_ICON, icon_rect)
-
-    # If no data is loaded, show the load popup
-    if not headers:
-        load_button_rect = draw_load_popup(screen, w, h)
-        pygame.display.flip()
-        return 0, pygame.Rect(0, 0, 0, 0), pygame.Rect(0, 0, 0, 0), min_rect, max_rect, close_rect, 0, 0, load_button_rect  # Return the actual load button rect
-
-    # Calculate available width for content
-    available_width = w - SCROLLBAR_WIDTH - 50  # 50 for checkbox column
-    min_column_width = 170
-    total_columns = len(headers)
-    
-    # Calculate optimal column widths based on content
-    column_widths = []
-    for i, col_name in enumerate(headers):
-        # Get the maximum width needed for this column
-        max_width = 0
-        # Check header width
-        header_width = FONT.size(col_name)[0] + 2 * PADDING
-        max_width = max(max_width, header_width)
-        
-        # Check all data widths in this column
-        for row in rows:
-            text_width = FONT.size(row[col_name])[0] + 2 * PADDING
-            max_width = max(max_width, text_width)
-        
-        # Ensure minimum width
-        max_width = max(max_width, min_column_width)
-        column_widths.append(max_width)
-    
-    # Calculate how many columns can fit in one row
-    columns_per_row = 1
-    while True:
-        total_width = sum(column_widths[:columns_per_row])
-        if total_width > available_width and columns_per_row > 1:
-            columns_per_row -= 1
-            break
-        if columns_per_row >= total_columns:
-            break
-        columns_per_row += 1
-    
-    # Adjust column widths to fit available space
-    if columns_per_row < total_columns:
-        # Calculate total width of columns in each row
-        for row in range((total_columns + columns_per_row - 1) // columns_per_row):
-            start_col = row * columns_per_row
-            end_col = min(start_col + columns_per_row, total_columns)
-            row_width = sum(column_widths[start_col:end_col])
-            
-            if row_width > available_width:
-                # Scale down columns in this row
-                scale = available_width / row_width
-                for i in range(start_col, end_col):
-                    column_widths[i] = int(column_widths[i] * scale)
-    
-    total_rows = (total_columns + columns_per_row - 1) // columns_per_row
-
-    # Draw column headers with shadow
-    header_y = TITLEBAR_HEIGHT
-    header_height_total = ROW_HEADER_HEIGHT * total_rows
-    pygame.draw.rect(screen, HEADER_BG, (0, header_y, w - SCROLLBAR_WIDTH, header_height_total))
-
-    # Draw a subtle shadow line below the header with a blur effect approximation
-    shadow_color_dark = (20, 20, 20)
-    shadow_color_light = (30, 30, 30)
-    shadow_height = 2
-    shadow_blur_height = 2
-
-    pygame.draw.rect(screen, shadow_color_dark, (0, header_y + header_height_total, w - SCROLLBAR_WIDTH, shadow_height))
-    pygame.draw.rect(screen, shadow_color_light, (0, header_y + header_height_total + shadow_height, w - SCROLLBAR_WIDTH, shadow_blur_height // 2))
-    pygame.draw.rect(screen, shadow_color_light, (0, header_y + header_height_total + shadow_height + shadow_blur_height // 2, w - SCROLLBAR_WIDTH, shadow_blur_height - shadow_blur_height // 2))
-
-    # Draw headers with shadow
-    for i, col_name in enumerate(headers):
-        row = i // columns_per_row
-        col = i % columns_per_row
-        x = 50 + col * column_widths[i]
-        y = header_y + row * ROW_HEADER_HEIGHT + PADDING
-        
-        draw_text_with_shadow(screen, col_name, x + PADDING, y, FONT, HEADER_TEXT, HEADER_SHADOW_COLOR)
-
-    # Draw visible data rows
-    available_h = h - TITLEBAR_HEIGHT - header_height_total - shadow_height - shadow_blur_height
-    max_visible_rows_float = available_h / (ROW_HEADER_HEIGHT * total_rows) if (ROW_HEADER_HEIGHT * total_rows) > 0 else 0
-    max_visible_rows = int(max_visible_rows_float)
-
-    # Define the clipping area for the checklist rows
-    content_area_y = header_y + header_height_total + shadow_height + shadow_blur_height
-    content_area_rect = pygame.Rect(0, content_area_y, w - SCROLLBAR_WIDTH, h - content_area_y)
-    screen.set_clip(content_area_rect)
-
-    start = int(scroll_y)
-    end = min(len(rows), int(scroll_y) + max_visible_rows + 1)
-
-    for idx in range(start, end):
-        vertical_offset = (scroll_y - int(scroll_y)) * (ROW_HEADER_HEIGHT * total_rows)
-        base_row_y_in_content_area = (ROW_HEADER_HEIGHT * total_rows) * (idx - start) - vertical_offset
-        base_row_y = content_area_y + base_row_y_in_content_area
-
-        bg_color = ROW_ALT_COLOR_1 if idx % 2 == 0 else ROW_ALT_COLOR_2
-        pygame.draw.rect(screen, bg_color, (0, base_row_y, w - SCROLLBAR_WIDTH, ROW_HEADER_HEIGHT))
-
-        # Calculate the normal resting y position for the checkbox
-        normal_box_y = base_row_y + (ROW_HEADER_HEIGHT - BOX_SIZE) // 2
-
-        # Determine hover state
+        # Draw window control buttons
+        min_rect, max_rect, close_rect = get_button_rects(w)
         mouse_pos = pygame.mouse.get_pos()
-        checkbox_rect = pygame.Rect(PADDING * 2, normal_box_y, BOX_SIZE, BOX_SIZE)
-        is_hovering = checkbox_rect.collidepoint(mouse_pos)
+        mouse_pressed = pygame.mouse.get_pressed()[0]
 
-        # Update target y position based on hover state
-        target_box_y = normal_box_y - CHECKBOX_ANIMATION_OFFSET if is_hovering else normal_box_y
-
-        # Ensure the animation state list has an entry for this index
-        while len(checkbox_animation_state) <= idx:
-            checkbox_animation_state.append(normal_box_y) # Initialize with resting position
-
-        # Only animate if we're hovering, otherwise snap to normal position
-        if is_hovering:
-            checkbox_animation_state[idx] += (target_box_y - checkbox_animation_state[idx]) * CHECKBOX_HOVER_ANIMATION_SPEED
+        # Draw minimize button
+        if min_rect.collidepoint(mouse_pos):
+            bg = (80, 80, 80) if mouse_pressed else BUTTON_HOVER_BG
         else:
-            checkbox_animation_state[idx] = normal_box_y
+            bg = TITLE_CLIENT_BG
+        pygame.draw.rect(screen, bg, min_rect)
+        icon_rect = MINIMIZE_ICON.get_rect(center=min_rect.center)
+        screen.blit(MINIMIZE_ICON, icon_rect)
 
-        # Use the animated y position for drawing
-        animated_box_y = checkbox_animation_state[idx]
-
-        # Determine checkbox color based on state and hover
-        if checked[idx]:
-            box_color = CHECKBOX_CHECKED_HOVER if is_hovering else CHECKBOX_CHECKED
+        # Draw maximize/restore button
+        if max_rect.collidepoint(mouse_pos):
+            bg = (80, 80, 80) if mouse_pressed else BUTTON_HOVER_BG
         else:
-            box_color = CHECKBOX_HOVER_BG if is_hovering else CHECKBOX_BG
+            bg = TITLE_CLIENT_BG
+        pygame.draw.rect(screen, bg, max_rect)
+        icon = MAXIMIZE_ICON if not window_manager.is_maximized else RESTORE_ICON
+        icon_rect = icon.get_rect(center=max_rect.center)
+        screen.blit(icon, icon_rect)
 
-        # Draw the rounded, anti-aliased checkbox
-        draw_rounded_anti_aliased_rect(screen, box_color, pygame.Rect(PADDING * 2, animated_box_y, BOX_SIZE, BOX_SIZE), radius=2)
+        # Draw close button
+        if close_rect.collidepoint(mouse_pos):
+            bg = (255, 0, 0) if mouse_pressed else (200, 0, 0)
+        else:
+            bg = TITLE_CLIENT_BG
+        pygame.draw.rect(screen, bg, close_rect)
+        icon_rect = CLOSE_ICON.get_rect(center=close_rect.center)
+        screen.blit(CLOSE_ICON, icon_rect)
 
-        # Draw cell text
+        # If no data is loaded, show the load popup
+        if not headers:
+            load_button_rect = draw_load_popup(screen, w, h)
+            pygame.display.flip()
+            return 0, pygame.Rect(0, 0, 0, 0), pygame.Rect(0, 0, 0, 0), min_rect, max_rect, close_rect, 0, 0, load_button_rect
+
+        # Calculate available width for content
+        available_width = w - SCROLLBAR_WIDTH - 50  # 50 for checkbox column
+        min_column_width = 170
+        total_columns = len(headers)
+        
+        # Calculate optimal column widths based on content
+        column_widths = []
+        for i, col_name in enumerate(headers):
+            # Get the maximum width needed for this column
+            max_width = 0
+            # Check header width
+            header_width = FONT.size(str(col_name))[0] + 2 * PADDING
+            max_width = max(max_width, header_width)
+            
+            # Check all data widths in this column
+            for row in rows:
+                val = str(row.get(col_name, ''))
+                text_width = FONT.size(val)[0] + 2 * PADDING
+                max_width = max(max_width, text_width)
+            
+            # Ensure minimum width
+            max_width = max(max_width, min_column_width)
+            column_widths.append(max_width)
+        
+        # Calculate how many columns can fit in one row
+        columns_per_row = 1
+        while True:
+            total_width = sum(column_widths[:columns_per_row])
+            if total_width > available_width and columns_per_row > 1:
+                columns_per_row -= 1
+                break
+            if columns_per_row >= total_columns:
+                break
+            columns_per_row += 1
+        
+        # Adjust column widths to fit available space
+        if columns_per_row < total_columns:
+            # Calculate total width of columns in each row
+            for row in range((total_columns + columns_per_row - 1) // columns_per_row):
+                start_col = row * columns_per_row
+                end_col = min(start_col + columns_per_row, total_columns)
+                row_width = sum(column_widths[start_col:end_col])
+                
+                if row_width > available_width:
+                    # Scale down columns in this row
+                    scale = available_width / row_width
+                    for i in range(start_col, end_col):
+                        column_widths[i] = int(column_widths[i] * scale)
+        
+        total_rows = (total_columns + columns_per_row - 1) // columns_per_row
+
+        # Draw column headers with shadow
+        header_y = TITLEBAR_HEIGHT
+        header_height_total = ROW_HEADER_HEIGHT * total_rows
+        pygame.draw.rect(screen, HEADER_BG, (0, header_y, w - SCROLLBAR_WIDTH, header_height_total))
+
+        # Draw a subtle shadow line below the header
+        shadow_color_dark = (20, 20, 20)
+        shadow_color_light = (30, 30, 30)
+        shadow_height = 2
+        shadow_blur_height = 2
+
+        pygame.draw.rect(screen, shadow_color_dark, (0, header_y + header_height_total, w - SCROLLBAR_WIDTH, shadow_height))
+        pygame.draw.rect(screen, shadow_color_light, (0, header_y + header_height_total + shadow_height, w - SCROLLBAR_WIDTH, shadow_blur_height // 2))
+        pygame.draw.rect(screen, shadow_color_light, (0, header_y + header_height_total + shadow_height + shadow_blur_height // 2, w - SCROLLBAR_WIDTH, shadow_blur_height - shadow_blur_height // 2))
+
+        # Draw headers with shadow
         for i, col_name in enumerate(headers):
             row = i // columns_per_row
             col = i % columns_per_row
             x = 50 + col * column_widths[i]
-            y = base_row_y + row * ROW_HEADER_HEIGHT + PADDING
-            
-            val = rows[idx][col_name]
-            draw_wrapped_text(
-                surface=screen,
-                text=val,
-                x=x + PADDING,
-                y=y,
-                width=column_widths[i] - 2 * PADDING,
-                font=FONT,
-                color=TEXT_COLOR
+            y = header_y + row * ROW_HEADER_HEIGHT + PADDING
+            draw_text_with_shadow(screen, str(col_name), x + PADDING, y, FONT, HEADER_TEXT, HEADER_SHADOW_COLOR)
+
+        # Draw visible data rows
+        available_h = h - TITLEBAR_HEIGHT - header_height_total - shadow_height - shadow_blur_height
+        max_visible_rows_float = available_h / (ROW_HEADER_HEIGHT * total_rows) if (ROW_HEADER_HEIGHT * total_rows) > 0 else 0
+        max_visible_rows = int(max_visible_rows_float)
+
+        # Define the clipping area for the checklist rows
+        content_area_y = header_y + header_height_total + shadow_height + shadow_blur_height
+        content_area_rect = pygame.Rect(0, content_area_y, w - SCROLLBAR_WIDTH, h - content_area_y)
+        screen.set_clip(content_area_rect)
+
+        start = int(scroll_y)
+        end = min(len(rows), int(scroll_y) + max_visible_rows + 1)
+
+        for idx in range(start, end):
+            vertical_offset = (scroll_y - int(scroll_y)) * (ROW_HEADER_HEIGHT * total_rows)
+            base_row_y_in_content_area = (ROW_HEADER_HEIGHT * total_rows) * (idx - start) - vertical_offset
+            base_row_y = content_area_y + base_row_y_in_content_area
+
+            bg_color = ROW_ALT_COLOR_1 if idx % 2 == 0 else ROW_ALT_COLOR_2
+            pygame.draw.rect(screen, bg_color, (0, base_row_y, w - SCROLLBAR_WIDTH, ROW_HEADER_HEIGHT))
+
+            # Calculate the normal resting y position for the checkbox
+            normal_box_y = base_row_y + (ROW_HEADER_HEIGHT - BOX_SIZE) // 2
+
+            # Determine hover state
+            mouse_pos = pygame.mouse.get_pos()
+            checkbox_rect = pygame.Rect(PADDING * 2, normal_box_y, BOX_SIZE, BOX_SIZE)
+            is_hovering = checkbox_rect.collidepoint(mouse_pos)
+
+            # Update target y position based on hover state
+            target_box_y = normal_box_y - CHECKBOX_ANIMATION_OFFSET if is_hovering else normal_box_y
+
+            # Ensure the animation state list has an entry for this index
+            while len(checkbox_animation_state) <= idx:
+                checkbox_animation_state.append(0)  # Store hover offset instead of absolute position
+
+            # Smoothly animate the hover offset
+            current_offset = checkbox_animation_state[idx]
+            target_offset = -CHECKBOX_ANIMATION_OFFSET if is_hovering else 0
+            if abs(current_offset - target_offset) > 0.1:  # Only animate if difference is significant
+                checkbox_animation_state[idx] += (target_offset - current_offset) * CHECKBOX_HOVER_ANIMATION_SPEED
+
+            # Use the normal position plus the hover offset for drawing
+            animated_box_y = normal_box_y + checkbox_animation_state[idx]
+
+            # Determine checkbox color based on state and hover
+            if checked[idx]:
+                box_color = CHECKBOX_CHECKED_HOVER if is_hovering else CHECKBOX_CHECKED
+            else:
+                box_color = CHECKBOX_HOVER_BG if is_hovering else CHECKBOX_BG
+
+            # Draw the rounded, anti-aliased checkbox
+            draw_rounded_anti_aliased_rect(screen, box_color, pygame.Rect(PADDING * 2, animated_box_y, BOX_SIZE, BOX_SIZE), radius=2)
+
+            # Draw cell text
+            for i, col_name in enumerate(headers):
+                row = i // columns_per_row
+                col = i % columns_per_row
+                x = 50 + col * column_widths[i]
+                y = base_row_y + row * ROW_HEADER_HEIGHT + PADDING
+                val = str(rows[idx].get(col_name, ''))
+                draw_wrapped_text(
+                    surface=screen,
+                    text=val,
+                    x=x + PADDING,
+                    y=y,
+                    width=column_widths[i] - 2 * PADDING,
+                    font=FONT,
+                    color=TEXT_COLOR
+                )
+
+        # Clear clipping area
+        screen.set_clip(None)
+
+        # Draw scrollbar with gradient background
+        scrollbar_x = w - SCROLLBAR_WIDTH
+        scrollbar_y_start = TITLEBAR_HEIGHT
+        scrollbar_rect = pygame.Rect(scrollbar_x, scrollbar_y_start, SCROLLBAR_WIDTH, h - scrollbar_y_start)
+
+        # Draw gradient background for scrollbar
+        for y in range(scrollbar_rect.top, scrollbar_rect.bottom):
+            gradient_progress = (y - scrollbar_rect.top) / scrollbar_rect.height
+            current_color = tuple(
+                int(SCROLLBAR_BG[i] + (SCROLLBAR_BG_GRADIENT[i] - SCROLLBAR_BG[i]) * gradient_progress)
+                for i in range(3)
+            )
+            pygame.draw.line(screen, current_color, (scrollbar_x, y), (scrollbar_x + SCROLLBAR_WIDTH, y))
+
+        # Calculate thumb dimensions and position
+        if len(rows) <= max_visible_rows:
+            thumb_height = scrollbar_rect.height
+        else:
+            thumb_height = max(
+                int(scrollbar_rect.height * max_visible_rows / len(rows)),
+                25
             )
 
-    # Clear clipping area
-    screen.set_clip(None)
+        if len(rows) > max_visible_rows:
+            thumb_y = scrollbar_rect.y + (
+                (scrollbar_rect.height - thumb_height) * scroll_y
+                / (len(rows) - max_visible_rows)
+            )
+        else:
+            thumb_y = scrollbar_rect.y
 
-    # Draw scrollbar with gradient background
-    scrollbar_x = w - SCROLLBAR_WIDTH
-    scrollbar_y_start = TITLEBAR_HEIGHT
-    scrollbar_rect = pygame.Rect(scrollbar_x, scrollbar_y_start, SCROLLBAR_WIDTH, h - scrollbar_y_start)
+        # Determine thumb color based on hover state
+        mouse_pos = pygame.mouse.get_pos()
+        full_width_thumb_rect = pygame.Rect(scrollbar_x, int(thumb_y), SCROLLBAR_WIDTH, thumb_height)
 
-    # Draw gradient background for scrollbar
-    for y in range(scrollbar_rect.top, scrollbar_rect.bottom):
-        # Calculate gradient color based on position
-        gradient_progress = (y - scrollbar_rect.top) / scrollbar_rect.height
-        current_color = tuple(
-            int(SCROLLBAR_BG[i] + (SCROLLBAR_BG_GRADIENT[i] - SCROLLBAR_BG[i]) * gradient_progress)
-            for i in range(3)
-        )
-        pygame.draw.line(screen, current_color, (scrollbar_x, y), (scrollbar_x + SCROLLBAR_WIDTH, y))
+        if full_width_thumb_rect.collidepoint(mouse_pos):
+            thumb_color = SCROLLBAR_HOVER_FG
+        else:
+            thumb_color = SCROLLBAR_FG
 
-    # Calculate thumb dimensions and position
-    if len(rows) <= max_visible_rows:
-        thumb_height = scrollbar_rect.height
-    else:
-        thumb_height = max(
-            int(scrollbar_rect.height * max_visible_rows / len(rows)),
-            25
-        )
+        # Calculate the drawing rectangle for the thumb with padding
+        thumb_draw_width = SCROLLBAR_WIDTH - 2 * THUMB_PADDING
+        thumb_draw_x = scrollbar_x + THUMB_PADDING
+        thumb_draw_rect = pygame.Rect(thumb_draw_x, int(thumb_y), thumb_draw_width, thumb_height)
 
-    if len(rows) > max_visible_rows:
-        thumb_y = scrollbar_rect.y + (
-            (scrollbar_rect.height - thumb_height) * scroll_y
-            / (len(rows) - max_visible_rows)
-        )
-    else:
-        thumb_y = scrollbar_rect.y
+        # Draw the rounded, anti-aliased thumb
+        draw_rounded_anti_aliased_rect(screen, thumb_color, thumb_draw_rect, radius=int(thumb_draw_width / 2))
 
-    # Determine thumb color based on hover state
-    mouse_pos = pygame.mouse.get_pos()
-    full_width_thumb_rect = pygame.Rect(scrollbar_x, int(thumb_y), SCROLLBAR_WIDTH, thumb_height)
+        pygame.display.flip()
+        return max_visible_rows, full_width_thumb_rect, scrollbar_rect, min_rect, max_rect, close_rect, total_rows, thumb_height, pygame.Rect(0, 0, 0, 0)
 
-    if full_width_thumb_rect.collidepoint(mouse_pos):
-        thumb_color = SCROLLBAR_HOVER_FG
-    else:
-        thumb_color = SCROLLBAR_FG
-
-    # Calculate the drawing rectangle for the thumb with padding
-    thumb_draw_width = SCROLLBAR_WIDTH - 2 * THUMB_PADDING
-    thumb_draw_x = scrollbar_x + THUMB_PADDING
-    thumb_draw_rect = pygame.Rect(thumb_draw_x, int(thumb_y), thumb_draw_width, thumb_height)
-
-    # Draw the rounded, anti-aliased thumb
-    draw_rounded_anti_aliased_rect(screen, thumb_color, thumb_draw_rect, radius=int(thumb_draw_width / 2))
-
-    pygame.display.flip()
-    return max_visible_rows, full_width_thumb_rect, scrollbar_rect, min_rect, max_rect, close_rect, total_rows, thumb_height, pygame.Rect(0, 0, 0, 0)  # Return empty rect when no load button is shown
+    except Exception as e:
+        print(f"Critical error in draw_all: {e}")
+        raise
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 6) MAIN LOOP
 # ──────────────────────────────────────────────────────────────────────────────
 
 def main():
-    global scroll_y, checked
+    global scroll_y, checked, headers, rows
     
-    window_manager = WindowManager()
-    clock = pygame.time.Clock()
-    running = True
-    dragging_scrollbar = False
-    drag_offset = 0
-    scroll_y = 0.0
-    target_scroll_y = 0.0
-    scroll_speed = 0.2  # Changed back to 0.2 for smooth scrolling
-
-    # Initialize checkbox animation state (list of current y positions)
-    checkbox_animation_state = [] # This will be populated in draw_all
-
-    # Load application icon
     try:
-        app_icon_surface = pygame.image.load(APP_ICON_FILE).convert_alpha()
-        app_icon_surface = pygame.transform.scale(app_icon_surface, (35, 35))
-    except pygame.error as e:
-        print(f"Warning: Could not load application icon {APP_ICON_FILE}: {e}")
-        app_icon_surface = None
+        window_manager = WindowManager()
+        clock = pygame.time.Clock()
+        running = True
+        dragging_scrollbar = False
+        drag_offset = 0
+        scroll_y = 0.0
+        current_scroll_speed = 0.0
+        last_time = pygame.time.get_ticks()
 
-    # Initialize variables
-    max_visible_rows = 0
-    max_scroll = 0.0
-    thumb_height = 0
+        # Initialize checkbox animation state (list of current y positions)
+        checkbox_animation_state = [] # This will be populated in draw_all
 
-    while running:
-        w, h = screen.get_size()
-        # Pass the animation state list to draw_all
-        max_visible_rows, thumb_rect, scrollbar_rect, min_btn, max_btn, close_btn, total_rows, thumb_height, load_button_rect = draw_all(screen, window_manager, app_icon_surface, checkbox_animation_state)
+        # Load application icon
+        try:
+            # Determine if running as a PyInstaller bundle
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.abspath(".")
+            icon_path = os.path.join(base_path, APP_ICON_FILE)
+            app_icon_surface = pygame.image.load(icon_path).convert_alpha()
+            app_icon_surface = pygame.transform.scale(app_icon_surface, (35, 35))
+        except pygame.error as e:
+            print(f"Warning: Could not load application icon {APP_ICON_FILE}: {e}")
+            app_icon_surface = None
 
-        max_scroll = max(0.0, len(rows) - max_visible_rows)
-        scroll_y = max(0.0, min(scroll_y, max_scroll))
-        target_scroll_y = max(0.0, min(target_scroll_y, max_scroll))
+        # Initialize variables
+        max_visible_rows = 0
+        max_scroll = 0.0
+        thumb_height = 0
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
+        while running:
+            try:
+                current_time = pygame.time.get_ticks()
+                delta_time = (current_time - last_time) / 1000.0  # Convert to seconds
+                last_time = current_time
 
-            if window_manager.handle_event(event):
-                scroll_y = target_scroll_y
+                w, h = screen.get_size()
+                # Pass the animation state list to draw_all
+                max_visible_rows, thumb_rect, scrollbar_rect, min_btn, max_btn, close_btn, total_rows, thumb_height, load_button_rect = draw_all(screen, window_manager, app_icon_surface, checkbox_animation_state)
+
+                max_scroll = max(0.0, len(rows) - max_visible_rows)
+                scroll_y = max(0.0, min(scroll_y, max_scroll))
+
+                for event in pygame.event.get():
+                    try:
+                        if event.type == pygame.QUIT:
+                            running = False
+
+                        if window_manager.handle_event(event):
+                            continue
+
+                        if event.type == pygame.MOUSEBUTTONDOWN:
+                            if event.button == 1:  # Left click
+                                mx, my = event.pos
+
+                                # Check if load button was clicked
+                                if not headers and load_button_rect.collidepoint(mx, my):
+                                    try:
+                                        # Create a file dialog using win32ui
+                                        dlg = win32ui.CreateFileDialog(
+                                            1,  # 1 for open, 0 for save
+                                            "csv",  # default extension
+                                            None,  # default filename
+                                            win32con.OFN_FILEMUSTEXIST | win32con.OFN_PATHMUSTEXIST,
+                                            "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*||"
+                                        )
+                                        dlg.SetOFNTitle("Select CSV File")
+                                        
+                                        if dlg.DoModal() == win32con.IDOK:
+                                            filepath = dlg.GetPathName()
+                                            try:
+                                                # Load the CSV file
+                                                with open(filepath, newline="", encoding="utf-8-sig") as f:
+                                                    try:
+                                                        reader = csv.DictReader(f)
+                                                        if not reader.fieldnames:
+                                                            print("Error: CSV file appears to be empty or has no headers")
+                                                            continue
+                                                        
+                                                        # Clear existing data
+                                                        headers.clear()
+                                                        rows.clear()
+                                                        checked.clear()
+                                                        
+                                                        # Load new data
+                                                        headers.extend(reader.fieldnames[:])
+                                                        rows.extend([row for row in reader])
+                                                        checked.extend([False] * len(rows))
+                                                        
+                                                        print(f"Successfully loaded CSV with {len(headers)} columns and {len(rows)} rows")
+                                                    except csv.Error as e:
+                                                        print(f"Error parsing CSV file: {e}")
+                                                        continue
+                                            except Exception as e:
+                                                print(f"Error opening file {filepath}: {e}")
+                                                continue
+                                        
+                                    except Exception as e:
+                                        print(f"Error in file dialog: {e}")
+
+                                # Window control buttons
+                                elif close_btn.collidepoint(mx, my):
+                                    window_manager.close_window()
+                                    running = False
+                                elif max_btn.collidepoint(mx, my):
+                                    window_manager.maximize_window()
+                                elif min_btn.collidepoint(mx, my):
+                                    window_manager.minimize_window()
+
+                                # Scrollbar and checkbox handling
+                                elif my > TITLEBAR_HEIGHT:
+                                    if thumb_rect.collidepoint(event.pos):
+                                        dragging_scrollbar = True
+                                        drag_offset = my - thumb_rect.y
+                                    elif scrollbar_rect.collidepoint(mx, my):
+                                        scrollbar_track_height = scrollbar_rect.height - thumb_height
+                                        if len(rows) > max_visible_rows and scrollbar_track_height > 0:
+                                            rel_y_in_track = my - scrollbar_rect.y - thumb_rect.height / 2.0
+                                            rel_y_in_track = max(0.0, min(rel_y_in_track, scrollbar_track_height))
+                                            scroll_y = (rel_y_in_track / scrollbar_track_height) * (len(rows) - max_visible_rows)
+                                            current_scroll_speed = 0  # Stop momentum when using scrollbar
+
+                                    # Checkbox handling
+                                    if PADDING * 2 <= mx <= PADDING * 2 + BOX_SIZE:
+                                        header_height_total = ROW_HEADER_HEIGHT * total_rows
+                                        content_area_y_start = TITLEBAR_HEIGHT + header_height_total + SHADOW_HEIGHT + SHADOW_BLUR_HEIGHT
+                                        content_area_y_end = h - SCROLLBAR_WIDTH
+                                        
+                                        if my >= content_area_y_start and my <= content_area_y_end:
+                                            # Use exactly the same logic as in draw_all to find which row was clicked
+                                            start = int(scroll_y)
+                                            end = min(len(rows), int(scroll_y) + max_visible_rows + 1)
+                                            
+                                            # Find which visible row was clicked
+                                            clicked_visible_idx = None
+                                            for idx in range(start, end):
+                                                vertical_offset = (scroll_y - int(scroll_y)) * (ROW_HEADER_HEIGHT * total_rows)
+                                                base_row_y_in_content_area = (ROW_HEADER_HEIGHT * total_rows) * (idx - start) - vertical_offset
+                                                base_row_y = content_area_y_start + base_row_y_in_content_area
+                                                
+                                                # Check if click is within this row's bounds
+                                                if my >= base_row_y and my < base_row_y + ROW_HEADER_HEIGHT:
+                                                    clicked_visible_idx = idx
+                                                    break
+                                            
+                                            if clicked_visible_idx is not None and 0 <= clicked_visible_idx < len(rows):
+                                                # Calculate checkbox position using exactly the same logic as in draw_all
+                                                vertical_offset = (scroll_y - int(scroll_y)) * (ROW_HEADER_HEIGHT * total_rows)
+                                                base_row_y_in_content_area = (ROW_HEADER_HEIGHT * total_rows) * (clicked_visible_idx - start) - vertical_offset
+                                                base_row_y = content_area_y_start + base_row_y_in_content_area
+                                                normal_box_y = base_row_y + (ROW_HEADER_HEIGHT - BOX_SIZE) // 2
+                                                
+                                                # Get the hover offset if available
+                                                hover_offset = 0
+                                                if 0 <= clicked_visible_idx < len(checkbox_animation_state):
+                                                    hover_offset = checkbox_animation_state[clicked_visible_idx]
+                                                
+                                                # Use the normal position plus hover offset for click detection
+                                                animated_box_y = normal_box_y + hover_offset
+                                                
+                                                # Check if click was within checkbox bounds with a larger margin for better usability
+                                                if my >= animated_box_y - 4 and my <= animated_box_y + BOX_SIZE + 4:
+                                                    print(f"Toggling checkbox for row {clicked_visible_idx}")
+                                                    checked[clicked_visible_idx] = not checked[clicked_visible_idx]
+
+                            elif event.button == 4:  # Mouse wheel up
+                                current_scroll_speed = max(-SCROLL_MAX_SPEED, current_scroll_speed - SCROLL_ACCELERATION)
+                            elif event.button == 5:  # Mouse wheel down
+                                current_scroll_speed = min(SCROLL_MAX_SPEED, current_scroll_speed + SCROLL_ACCELERATION)
+
+                        elif event.type == pygame.MOUSEBUTTONUP:
+                            if event.button == 1:
+                                dragging_scrollbar = False
+
+                        elif event.type == pygame.MOUSEMOTION:
+                            if dragging_scrollbar:
+                                scrollbar_track_height = scrollbar_rect.height - thumb_height
+                                if len(rows) > max_visible_rows and scrollbar_track_height > 0:
+                                    rel_y_in_track = event.pos[1] - scrollbar_rect.y - thumb_rect.height / 2.0
+                                    rel_y_in_track = max(0.0, min(rel_y_in_track, scrollbar_track_height))
+                                    scroll_y = (rel_y_in_track / scrollbar_track_height) * (len(rows) - max_visible_rows)
+                                    current_scroll_speed = 0  # Stop momentum when using scrollbar
+
+                        elif event.type == pygame.KEYDOWN:
+                            if event.key == pygame.K_UP:
+                                current_scroll_speed = max(-SCROLL_MAX_SPEED, current_scroll_speed - SCROLL_ACCELERATION)
+                            elif event.key == pygame.K_DOWN:
+                                current_scroll_speed = min(SCROLL_MAX_SPEED, current_scroll_speed + SCROLL_ACCELERATION)
+
+                    except Exception as e:
+                        print(f"Error handling event: {e}")
+                        continue
+
+                # Update scroll position with physics
+                if not dragging_scrollbar:
+                    if abs(current_scroll_speed) > 0.01:
+                        scroll_y += current_scroll_speed
+                        # Apply deceleration proportional to current speed
+                        speed_factor = abs(current_scroll_speed) / SCROLL_MAX_SPEED
+                        deceleration = SCROLL_DECELERATION * (1 + speed_factor * 2)  # More deceleration at higher speeds
+                        if current_scroll_speed > 0:
+                            current_scroll_speed = max(0, current_scroll_speed - deceleration * delta_time)
+                        else:
+                            current_scroll_speed = min(0, current_scroll_speed + deceleration * delta_time)
+                    else:
+                        current_scroll_speed = 0
+
+                # Ensure scroll position stays within bounds
+                scroll_y = max(0.0, min(scroll_y, max_scroll))
+
+                clock.tick(60)
+
+            except Exception as e:
+                print(f"Error in main loop iteration: {e}")
                 continue
 
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left click
-                    mx, my = event.pos
-
-                    # Check if load button was clicked
-                    if not headers and load_button_rect.collidepoint(mx, my):
-                        try:
-                            # Create a file dialog using win32ui
-                            dlg = win32ui.CreateFileDialog(
-                                1,  # 1 for open, 0 for save
-                                "csv",  # default extension
-                                None,  # default filename
-                                win32con.OFN_FILEMUSTEXIST | win32con.OFN_PATHMUSTEXIST,
-                                "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*||"
-                            )
-                            dlg.SetOFNTitle("Select CSV File")
-                            
-                            if dlg.DoModal() == win32con.IDOK:
-                                filepath = dlg.GetPathName()
-                                # Load the CSV file
-                                with open(filepath, newline="", encoding="utf-8-sig") as f:
-                                    reader = csv.DictReader(f)
-                                    # Clear existing data
-                                    headers.clear()
-                                    rows.clear()
-                                    checked.clear()
-                                    # Load new data
-                                    headers.extend(reader.fieldnames[:])
-                                    rows.extend([row for row in reader])
-                                    checked.extend([False] * len(rows))
-                            
-                        except Exception as e:
-                            print(f"Error opening file dialog: {e}")
-
-                    # Window control buttons
-                    # Check if window control buttons were clicked - ensure this happens AFTER load button check
-                    elif close_btn.collidepoint(mx, my):
-                        window_manager.close_window()
-                        running = False
-                    elif max_btn.collidepoint(mx, my):
-                        window_manager.maximize_window()
-                    elif min_btn.collidepoint(mx, my):
-                        window_manager.minimize_window()
-
-                    # Scrollbar and checkbox handling
-                    elif my > TITLEBAR_HEIGHT:
-                        if thumb_rect.collidepoint(event.pos):
-                            dragging_scrollbar = True
-                            drag_offset = my - thumb_rect.y
-                        elif scrollbar_rect.collidepoint(mx, my):
-                            scrollbar_track_height = scrollbar_rect.height - thumb_height
-                            if len(rows) > max_visible_rows and scrollbar_track_height > 0:
-                                rel_y_in_track = my - scrollbar_rect.y - thumb_rect.height / 2.0
-                                rel_y_in_track = max(0.0, min(rel_y_in_track, scrollbar_track_height))
-                                target_scroll_y = (rel_y_in_track / scrollbar_track_height) * (len(rows) - max_visible_rows)
-
-                        if PADDING * 2 <= mx <= PADDING * 2 + BOX_SIZE:
-                            header_height_total_for_click = ROW_HEADER_HEIGHT * total_rows
-                            content_area_y_start = TITLEBAR_HEIGHT + header_height_total_for_click + SHADOW_HEIGHT + SHADOW_BLUR_HEIGHT
-                            content_area_y_end = h - SCROLLBAR_WIDTH
-                            
-                            if my >= content_area_y_start and my <= content_area_y_end:
-                                # Calculate which row was clicked
-                                rel_y = my - content_area_y_start
-                                row_height = ROW_HEADER_HEIGHT * total_rows
-                                clicked_idx = int(scroll_y) + (rel_y // row_height) if row_height > 0 else 0
-                                
-                                if 0 <= clicked_idx < len(rows):
-                                    # Check if click was in the first row of the entry
-                                    row_in_entry = (rel_y % row_height) // ROW_HEADER_HEIGHT if row_height > 0 else 0
-                                    if row_in_entry == 0:
-                                        # Calculate checkbox position
-                                        box_top_visual = content_area_y_start + row_height * (clicked_idx - scroll_y) + (ROW_HEADER_HEIGHT - BOX_SIZE) // 2
-                                        
-                                        # Get the animated position if available
-                                        if 0 <= clicked_idx < len(checkbox_animation_state):
-                                            animated_box_y = checkbox_animation_state[clicked_idx]
-                                        else:
-                                            animated_box_y = box_top_visual
-                                        
-                                        # Check if click was within checkbox bounds
-                                        if my >= animated_box_y and my <= animated_box_y + BOX_SIZE:
-                                            checked[clicked_idx] = not checked[clicked_idx]
-
-                elif event.button == 4:
-                    target_scroll_y = max(0.0, target_scroll_y - 1.0)
-                elif event.button == 5:
-                    target_scroll_y = min(len(rows) - max_visible_rows, target_scroll_y + 1.0)
-
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    dragging_scrollbar = False
-
-            elif event.type == pygame.MOUSEMOTION:
-                if dragging_scrollbar:
-                    scrollbar_track_height = scrollbar_rect.height - thumb_height
-                    if len(rows) > max_visible_rows and scrollbar_track_height > 0:
-                        rel_y_in_track = event.pos[1] - scrollbar_rect.y - thumb_rect.height / 2.0
-                        rel_y_in_track = max(0.0, min(rel_y_in_track, scrollbar_track_height))
-                        target_scroll_y = (rel_y_in_track / scrollbar_track_height) * (len(rows) - max_visible_rows)
-
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_UP:
-                    target_scroll_y = max(0.0, target_scroll_y - 1.0)
-                elif event.key == pygame.K_DOWN:
-                    target_scroll_y = min(len(rows) - max_visible_rows, target_scroll_y + 1.0)
-
-        scroll_y += (target_scroll_y - scroll_y) * scroll_speed
-        clock.tick(60)
-
-    pygame.quit()
-    sys.exit()
+    except Exception as e:
+        print(f"Critical error in main: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        pygame.quit()
+        sys.exit()
 
 if __name__ == "__main__":
     main()
