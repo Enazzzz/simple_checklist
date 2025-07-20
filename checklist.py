@@ -99,7 +99,7 @@ BUTTON_WIDTH = 55
 BUTTON_HEIGHT = TITLEBAR_HEIGHT # Make button height same as title bar height
 
 # Application Icon file
-APP_ICON_FILE = "checklist.png"
+APP_ICON_FILE = "assets/checklist.png"
 
 # Fonts
 FONT = pygame.font.SysFont("Consolas", 18)
@@ -471,7 +471,7 @@ def load_system_icon(icon_name, size):
     else:
         base_path = os.path.abspath(".")
 
-    local_icon_path = os.path.join(base_path, f"{icon_name}_white.png")
+    local_icon_path = os.path.join(base_path, "assets", f"{icon_name}_white.png")
     if not os.path.exists(local_icon_path):
         raise FileNotFoundError(f"Icon file not found: {local_icon_path}")
         

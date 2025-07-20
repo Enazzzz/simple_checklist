@@ -8,7 +8,7 @@ from PIL import Image
 import os
 import sys
 
-def create_icon_from_image(source_image_path, output_ico_path="checklist.ico"):
+def create_icon_from_image(source_image_path, output_ico_path="assets/checklist.ico"):
     """
     Create a multi-size ICO file from a source image.
     
@@ -72,12 +72,12 @@ def main():
         print("Usage: python create_icon.py <source_image_path> [output_ico_path]")
         print("\nExample:")
         print("  python create_icon.py checklist_large.png")
-        print("  python create_icon.py checklist_large.png my_icon.ico")
+        print("  python create_icon.py checklist_large.png assets/my_icon.ico")
         print("\nThe script will create a multi-size ICO file with all standard Windows icon sizes.")
         return
     
     source_path = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) > 2 else "checklist.ico"
+    output_path = sys.argv[2] if len(sys.argv) > 2 else "assets/checklist.ico"
     
     success = create_icon_from_image(source_path, output_path)
     
